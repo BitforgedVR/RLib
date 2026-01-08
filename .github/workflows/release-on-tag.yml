@@ -1,0 +1,73 @@
+name: Release on Tag
+on:
+  push:
+    tags:
+      - '*'   # match any tag
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Extract tag version
+        id: tag
+        run: |
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          TAG_VERSION="$TAG_NAME"
+          echo "Tag name: $TAG_NAME"
+          echo "Tag version: $TAG_VERSION"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "tag_version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Read package.json version
+        id: pkg
+        run: |
+          PKG_VERSION=$(jq -r '.version' package.json)
+          if [ -z "$PKG_VERSION" ] || [ "$PKG_VERSION" = "null" ]; then
+            echo "::error::Could not read version from package.json"
+            exit 1
+          fi
+          echo "package.json version: $PKG_VERSION"
+          echo "pkg_version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Verify tag matches package.json version
+        run: |
+          if [ "${{ steps.tag.outputs.tag_version }}" != "${{ steps.pkg.outputs.pkg_version }}" ]; then
+            echo "::error::Tag version does not match package.json"
+            echo "Tag:          ${{ steps.tag.outputs.tag_version }}"
+            echo "package.json: ${{ steps.pkg.outputs.pkg_version }}"
+            exit 1
+          fi
+      - name: Ensure release does not already exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${{ steps.tag.outputs.tag_name }}" >/dev/null 2>&1; then
+            echo "::error::Release already exists for this tag"
+            exit 1
+          fi
+      - name: Create VPM package zip
+        run: |
+          PKG_NAME=$(jq -r '.name' package.json)
+          VERSION=$(jq -r '.version' package.json)
+          ZIP_NAME="${PKG_NAME}-${VERSION}.zip"
+          echo "Creating $ZIP_NAME"
+          zip -r "$ZIP_NAME" package.json Runtime/ Editor/ Resources/ -x "*.meta"
+          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+      - name: Create GitHub Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag_name }}
+          name: Release ${{ steps.tag.outputs.tag_name }}
+          generate_release_notes: true
+          files: |
+            ${{ env.ZIP_NAME }}
+      - name: Trigger workflow in another repo
+        uses: peter-evans/repository-dispatch@v2
+        with:
+                token: ${{ secrets.VPM_KEY }}
+                repository: BitforgedVR/VPM
+                event-type: build-repo-listing
+                client-payload: '{"ref": "${{ github.ref }}"}'
