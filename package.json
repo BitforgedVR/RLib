@@ -1,6 +1,6 @@
 {
   "name": "net.bitforged.rlib",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "displayName": "RetroLib",
   "description": "A collection of editor tooling and generic tools shared across Retro assets.",
   "unity": "2022.3",
